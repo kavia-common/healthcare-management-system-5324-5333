@@ -1,6 +1,7 @@
 from typing import AsyncGenerator, Optional
+import logging
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, status
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
 
 from src.api.config import get_settings
@@ -10,10 +11,14 @@ _db: Optional[AsyncIOMotorDatabase] = None
 
 
 def _init_client() -> None:
-    """Initialize the global Motor client and database handle."""
+    """Initialize the global Motor client and database handle.
+
+    This is intentionally lightweight and non-blocking. Motor connects lazily,
+    so creating the client will not block on connection attempts.
+    """
     global _client, _db
     if _client is None or _db is None:
-        settings = get_settings()
+        settings = get_settings()  # may raise if required env vars are missing
         _client = AsyncIOMotorClient(settings["mongodb_url"])
         _db = _client[settings["mongodb_db"]]
 
@@ -35,11 +40,27 @@ async def get_db() -> AsyncGenerator[AsyncIOMotorDatabase, None]:
 
     Yields:
         AsyncIOMotorDatabase: The database instance.
+
+    Raises:
+        HTTPException 503 if the database is not configured or unavailable.
     """
     if _db is None:
-        _init_client()
-    # mypy hint: _db is set by _init_client
-    assert _db is not None
+        try:
+            _init_client()
+        except Exception as exc:
+            # Do not expose secrets; provide actionable error and 503 status.
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Database is not configured or unavailable. Ensure MONGODB_URL and MONGODB_DB are set."
+            ) from exc
+
+    if _db is None:
+        # Defensive check in case initialization failed silently.
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Database is not configured or unavailable."
+        )
+
     try:
         yield _db
     finally:
@@ -58,8 +79,15 @@ def register_db_events(app: FastAPI) -> None:
 
     @app.on_event("startup")
     async def _on_startup() -> None:
-        # Initialize client and DB at startup for early failure discovery.
-        _init_client()
+        # Initialize client and DB at startup but do not crash if env vars are missing
+        # or if the DB is unreachable. This keeps the app booting for health checks
+        # and documentation even when the DB is down.
+        try:
+            _init_client()
+        except Exception as exc:
+            logging.getLogger("uvicorn.error").warning(
+                "Skipping DB initialization at startup: %s", str(exc)
+            )
 
     @app.on_event("shutdown")
     async def _on_shutdown() -> None:
