@@ -1,6 +1,6 @@
 import os
 from datetime import timedelta
-from typing import Optional
+from typing import List, Optional
 
 from dotenv import load_dotenv
 
@@ -33,6 +33,11 @@ def get_env(name: str, default: Optional[str] = None) -> str:
     return value
 
 
+def _parse_origins(origins_csv: str) -> List[str]:
+    """Split a comma-separated list of origins into a list, stripping spaces."""
+    return [o.strip() for o in origins_csv.split(",") if o.strip()]
+
+
 # PUBLIC_INTERFACE
 def get_settings() -> dict:
     """Return application settings loaded from environment.
@@ -46,6 +51,8 @@ def get_settings() -> dict:
     - JWT_SECRET: Required. Secret key for signing JWT tokens.
     - JWT_ALGORITHM: Optional. Defaults to 'HS256'.
     - ACCESS_TOKEN_EXPIRE_MINUTES: Optional. Defaults to 60 (int).
+    - FRONTEND_ORIGINS: Optional. Comma-separated allowed CORS origins; defaults to http://localhost:3000
+    - PORT: Optional. API port (int); defaults to 3001
 
     Returns:
         dict with configuration keys:
@@ -55,17 +62,26 @@ def get_settings() -> dict:
             jwt_algorithm (str)
             access_token_expire_minutes (int)
             access_token_expire_timedelta (timedelta)
+            frontend_origins (List[str])
+            port (int)
     """
     mongodb_url = get_env("MONGODB_URL")
     mongodb_db = get_env("MONGODB_DB")
     jwt_secret = get_env("JWT_SECRET")
     jwt_algorithm = get_env("JWT_ALGORITHM", "HS256")
     expire_minutes_raw = get_env("ACCESS_TOKEN_EXPIRE_MINUTES", "60")
+    frontend_origins_csv = get_env("FRONTEND_ORIGINS", "http://localhost:3000")
+    port_raw = get_env("PORT", "3001")
 
     try:
         expire_minutes = int(expire_minutes_raw)
     except ValueError as exc:
         raise ValueError("ACCESS_TOKEN_EXPIRE_MINUTES must be an integer") from exc
+
+    try:
+        port = int(port_raw)
+    except ValueError as exc:
+        raise ValueError("PORT must be an integer") from exc
 
     return {
         "mongodb_url": mongodb_url,
@@ -74,4 +90,6 @@ def get_settings() -> dict:
         "jwt_algorithm": jwt_algorithm,
         "access_token_expire_minutes": expire_minutes,
         "access_token_expire_timedelta": timedelta(minutes=expire_minutes),
+        "frontend_origins": _parse_origins(frontend_origins_csv),
+        "port": port,
     }

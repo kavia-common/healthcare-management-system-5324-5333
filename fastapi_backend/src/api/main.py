@@ -1,10 +1,10 @@
-import os
 from typing import List
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from src.api.db import register_db_events
+from src.api.config import get_settings
+from src.api.db import register_db_events, ping_db
 from src.api.routes.auth import router as auth_router
 from src.api.routes.patients import router as patients_router
 from src.api.routes.doctors import router as doctors_router
@@ -29,24 +29,10 @@ app = FastAPI(
 # Register DB lifecycle events
 register_db_events(app)
 
-# Configure CORS
-# Allow explicit localhost origins and optional environment-provided origins for Flutter preview.
-# FRONTEND_ORIGINS can be a comma-separated list, e.g.:
-# "http://localhost:3000,https://localhost:3000,https://appetize.io,https://*.appetize.io"
-default_origins: List[str] = [
-    "http://localhost:3000",
-    "https://localhost:3000",
-]
-# Common Flutter web preview domains (may vary). Include known preview host if provided via env.
-# During development, we allow wildcard if FRONTEND_ORIGINS is not set to avoid CORS issues.
-frontend_origins_env = os.getenv("FRONTEND_ORIGINS", "").strip()
-if frontend_origins_env:
-    # split by comma and strip spaces
-    extra = [o.strip() for o in frontend_origins_env.split(",") if o.strip()]
-    allow_origins = list({*default_origins, *extra})
-else:
-    # Fallback: permissive for local development; consider tightening in production
-    allow_origins = ["*"]
+# Configure CORS using env settings
+settings = get_settings()
+frontend_origins = settings.get("frontend_origins") or ["http://localhost:3000"]
+allow_origins: List[str] = frontend_origins if len(frontend_origins) > 0 else ["http://localhost:3000"]
 
 app.add_middleware(
     CORSMiddleware,
@@ -57,9 +43,14 @@ app.add_middleware(
 )
 
 @app.get("/", summary="Health Check", tags=["Misc"])
-def health_check():
-    """Basic health check endpoint."""
-    return {"message": "Healthy"}
+async def health_check():
+    """Basic health check endpoint with DB connectivity status.
+
+    Returns:
+        JSON with status 'ok' and db 'ok' or 'down'.
+    """
+    db_ok = await ping_db()
+    return {"status": "ok", "db": "ok" if db_ok else "down"}
 
 # Mount Routers: ensure each router has proper prefix and tags within its own module
 # Routers already define their prefixes and tags internally.

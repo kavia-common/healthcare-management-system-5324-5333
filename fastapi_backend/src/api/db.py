@@ -70,6 +70,25 @@ async def get_db() -> AsyncGenerator[AsyncIOMotorDatabase, None]:
 
 
 # PUBLIC_INTERFACE
+async def ping_db() -> bool:
+    """Ping the MongoDB server to verify connectivity.
+
+    Returns:
+        True if ping succeeds, False otherwise.
+    """
+    try:
+        if _db is None:
+            _init_client()
+        if _client is None:
+            return False
+        # Motor exposes 'admin' command on client
+        await _client.admin.command("ping")
+        return True
+    except Exception:
+        return False
+
+
+# PUBLIC_INTERFACE
 def register_db_events(app: FastAPI) -> None:
     """Register FastAPI startup and shutdown events for DB lifecycle.
 
